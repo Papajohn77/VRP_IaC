@@ -1,0 +1,163 @@
+- hosts: all
+  become: true
+
+  tasks:
+    - name: Install required system packages
+      apt:
+        pkg:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - python3-pip
+          - python3-setuptools
+        state: latest
+        update_cache: true
+      register: status
+      until: status is success
+      delay: 10
+      retries: 10
+
+    - name: Add Docker GPG apt key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      register: status
+      until: status is success
+      delay: 10
+      retries: 10
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+      register: status
+      until: status is success
+      delay: 10
+      retries: 10
+
+    - name: Install docker-ce
+      apt:
+        name: docker-ce
+        state: latest
+      register: status
+      until: status is success
+      delay: 10
+      retries: 10
+
+    - name: Install Docker and Docker Compose modules for Python
+      pip:
+        name:
+          - docker
+          - docker-compose
+
+    - name: Clone VRP_Solver GitHub repository
+      command: git clone https://github.com/Papajohn77/VRP_Solver.git ~/VRP_Solver
+
+    - name: Substitute the DOMAIN_NAME environment variable in the template files
+      shell:
+        cmd: envsubst '${DOMAIN_NAME}' < {{ item }}_template > {{ item }}
+        chdir: /root/VRP_Solver/nginx/sites-available
+      environment:
+        DOMAIN_NAME: "{{ domain_name }}"
+      with_items:
+        - vrp-solver
+        - vrp-solver-api
+        - phpmyadmin
+
+    - name: Remove the template files
+      shell:
+        cmd: rm {{ item }}_template
+        chdir: /root/VRP_Solver/nginx/sites-available
+      with_items:
+        - vrp-solver
+        - vrp-solver-api
+        - phpmyadmin
+
+    - name: Copy private key from Ansible Control Node machine
+      copy:
+        src: /root/VRP_IaC/tf-digitalocean
+        dest: /root/.ssh/tf-digitalocean
+        mode: 0600
+
+    - name: Add github.com to known hosts
+      shell: ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+    - name: Clone VRP_Solver_ENV GitHub private repository
+      command: git clone -c "core.sshCommand=ssh -i /root/.ssh/tf-digitalocean" git@github.com:Papajohn77/VRP_Solver_ENV.git ~/VRP_Solver/env
+
+    - name: Deploy Docker Compose stack
+      community.docker.docker_compose:
+        project_src: /root/VRP_Solver
+
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: latest
+      register: status
+      until: status is success
+      delay: 10
+      retries: 10
+
+    - name: Create /var/www/vrp-solver directory
+      file:
+        path: /var/www/vrp-solver
+        state: directory
+
+    - name: Create /var/www/vrp-solver/html directory
+      file:
+        path: /var/www/vrp-solver/html
+        state: directory
+
+    - name: Move html & css files to /var/www/vrp-solver/html
+      command: mv /root/VRP_Solver/frontend/{{ item }} /var/www/vrp-solver/html
+      with_items:
+        - index.html
+        - style.css
+
+    - name: Move JS files to /var/www/vrp-solver/html/js
+      command: mv /root/VRP_Solver/frontend/js /var/www/vrp-solver/html/js
+
+    - name: Move nginx.conf file to /etc/nginx
+      command: mv -f /root/VRP_Solver/nginx/nginx.conf /etc/nginx
+
+    - name: Synchronize sites-available directory
+      command: rsync -a /root/VRP_Solver/nginx/sites-available/ /etc/nginx/sites-available/
+
+    - name: Clear sites-enabled directory
+      command: rm /etc/nginx/sites-enabled/default
+
+    - name: Create symbolic links
+      command: ln -s /etc/nginx/sites-available/{{ item }} /etc/nginx/sites-enabled/
+      with_items:
+        - default
+        - vrp-solver
+        - vrp-solver-api
+        - phpmyadmin
+
+    - name: Install certbot and certbot nginx plugin
+      apt:
+        pkg:
+          - certbot
+          - python3-certbot-nginx
+        state: latest
+        update_cache: true
+      register: status
+      until: status is success
+      delay: 10
+      retries: 10
+
+    - name: Wait until dig output matches host IP address
+      command: dig "{{ domain_name }}" @8.8.8.8 @8.8.4.4 +short
+      register: dig_output
+      until: dig_output.stdout.strip() == hostvars[inventory_hostname]['ansible_default_ipv4']['address']
+      delay: 15
+      retries: 50
+
+    - name: Issue SSL certificates
+      command: certbot --nginx -n -d vrp-solver.{{ domain_name }} -d vrp-solver-api.{{ domain_name }} -d phpmyadmin.{{ domain_name }} -m {{ email_address }} --agree-tos
+
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
