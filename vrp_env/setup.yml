@@ -1,6 +1,10 @@
 - hosts: all
   become: true
 
+  vars:
+    docker_module_version: 6.1.2
+    docker_compose_module_version: 1.29.2
+
   tasks:
     - name: Install required system packages
       apt:
@@ -48,31 +52,8 @@
     - name: Install Docker and Docker Compose modules for Python
       pip:
         name:
-          - docker
-          - docker-compose
-
-    - name: Clone VRP_Solver GitHub repository
-      command: git clone https://github.com/Papajohn77/VRP_Solver.git ~/VRP_Solver
-
-    - name: Substitute the DOMAIN_NAME environment variable in the template files
-      shell:
-        cmd: envsubst '${DOMAIN_NAME}' < {{ item }}_template > {{ item }}
-        chdir: /root/VRP_Solver/nginx/sites-available
-      environment:
-        DOMAIN_NAME: "{{ domain_name }}"
-      with_items:
-        - vrp-solver
-        - vrp-solver-api
-        - phpmyadmin
-
-    - name: Remove the template files
-      shell:
-        cmd: rm {{ item }}_template
-        chdir: /root/VRP_Solver/nginx/sites-available
-      with_items:
-        - vrp-solver
-        - vrp-solver-api
-        - phpmyadmin
+          - docker=={{ docker_module_version }}
+          - docker-compose=={{ docker_compose_module_version }}
 
     - name: Copy private key from Ansible Control Node machine
       copy:
@@ -83,12 +64,35 @@
     - name: Add github.com to known hosts
       shell: ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-    - name: Clone VRP_Solver_ENV GitHub private repository
-      command: git clone -c "core.sshCommand=ssh -i /root/.ssh/tf-digitalocean" git@github.com:Papajohn77/VRP_Solver_ENV.git ~/VRP_Solver/env
+    - name: Clone VRP_Solver_Deployment GitHub private repository
+      command: git clone -c "core.sshCommand=ssh -i /root/.ssh/tf-digitalocean" git@github.com:Papajohn77/VRP_Solver_Deployment.git ~/VRP_Solver_Deployment
+
+    - name: Substitute the DOMAIN_NAME environment variable in the template files
+      shell:
+        cmd: envsubst '${DOMAIN_NAME}' < {{ item }}_template > {{ item }}
+        chdir: /root/VRP_Solver_Deployment/nginx/sites-available
+      environment:
+        DOMAIN_NAME: "{{ domain_name }}"
+      with_items:
+        - vrp-solver
+        - vrp-solver-api
+        - pgadmin
+
+    - name: Remove the template files
+      shell:
+        cmd: rm {{ item }}_template
+        chdir: /root/VRP_Solver_Deployment/nginx/sites-available
+      with_items:
+        - vrp-solver
+        - vrp-solver-api
+        - pgadmin
 
     - name: Deploy Docker Compose stack
       community.docker.docker_compose:
-        project_src: /root/VRP_Solver
+        project_src: /root/VRP_Solver_Deployment
+
+    - name: Clone VRP_Solver_frontend GitHub repository
+      command: git clone https://github.com/Papajohn77/VRP_Solver_frontend.git ~/VRP_Solver_frontend
 
     - name: Install nginx
       apt:
@@ -110,19 +114,19 @@
         state: directory
 
     - name: Move html & css files to /var/www/vrp-solver/html
-      command: mv /root/VRP_Solver/frontend/{{ item }} /var/www/vrp-solver/html
+      command: mv /root/VRP_Solver_frontend/frontend/{{ item }} /var/www/vrp-solver/html
       with_items:
         - index.html
         - style.css
 
     - name: Move JS files to /var/www/vrp-solver/html/js
-      command: mv /root/VRP_Solver/frontend/js /var/www/vrp-solver/html/js
+      command: mv /root/VRP_Solver_frontend/frontend/js /var/www/vrp-solver/html/js
 
     - name: Move nginx.conf file to /etc/nginx
-      command: mv -f /root/VRP_Solver/nginx/nginx.conf /etc/nginx
+      command: mv -f /root/VRP_Solver_Deployment/nginx/nginx.conf /etc/nginx
 
     - name: Synchronize sites-available directory
-      command: rsync -a /root/VRP_Solver/nginx/sites-available/ /etc/nginx/sites-available/
+      command: rsync -a /root/VRP_Solver_Deployment/nginx/sites-available/ /etc/nginx/sites-available/
 
     - name: Clear sites-enabled directory
       command: rm /etc/nginx/sites-enabled/default
@@ -133,7 +137,7 @@
         - default
         - vrp-solver
         - vrp-solver-api
-        - phpmyadmin
+        - pgadmin
 
     - name: Install certbot and certbot nginx plugin
       apt:
@@ -155,7 +159,7 @@
       retries: 50
 
     - name: Issue SSL certificates
-      command: certbot --nginx -n -d vrp-solver.{{ domain_name }} -d vrp-solver-api.{{ domain_name }} -d phpmyadmin.{{ domain_name }} -m {{ email_address }} --agree-tos
+      command: certbot --nginx -n -d vrp-solver.{{ domain_name }} -d vrp-solver-api.{{ domain_name }} -d pgadmin.{{ domain_name }} -m {{ email_address }} --agree-tos
 
     - name: Restart nginx
       service:

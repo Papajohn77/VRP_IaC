@@ -16,10 +16,10 @@ data "digitalocean_ssh_key" "ssh_key" {
 }
 
 resource "digitalocean_droplet" "vrp-env" {
-  image      = "ubuntu-22-10-x64"
+  image      = "ubuntu-22-04-x64"
   name       = "vrp-env"
   region     = "fra1"
-  size       = "s-1vcpu-1gb-intel"
+  size       = "s-1vcpu-1gb"
   monitoring = true
   ssh_keys   = [data.digitalocean_ssh_key.ssh_key.id]
 }
@@ -45,10 +45,10 @@ resource "digitalocean_record" "cname-record-vrp-solver-api" {
   depends_on = [digitalocean_domain.domain]
 }
 
-resource "digitalocean_record" "cname-record-phpmyadmin" {
+resource "digitalocean_record" "cname-record-pgadmin" {
   domain = var.domain_name
   type   = "CNAME"
-  name   = "phpmyadmin"
+  name   = "pgadmin"
   value  = format("%s.", var.domain_name)
   depends_on = [digitalocean_domain.domain]
 }
